@@ -22,8 +22,10 @@ namespace KnotStudios.GlimInstaller
         const string OldEmbeddedDir = "Assets/Packages/io.github.z3y.glim";
 
         // Bump when the installer changes what it does to Glim's files, so existing installs are
-        // re-patched. 1 = package path rewrite, 2 = Albedo Boost support.
-        const int PatchLevel = 2;
+        // re-patched. 1 = package path rewrite, 2 = Albedo Boost support,
+        // 3 = Environment Lighting Gradient / Color sky.
+        const int PatchLevel = 3;
+        const string AmbientHelperTemplate = "Packages/com.knotstudiosllc.glim-installer/Editor/Patches/GlimInstallerAmbient.cs.txt";
         // Dot-files are ignored by Unity's asset database.
         const string MarkerFile = InstallDir + "/.glim-installer-patch";
 
@@ -281,6 +283,10 @@ namespace KnotStudios.GlimInstaller
             //     (meta pass does albedo^(1/boost)); feed Glim the same value.
             bool albedoBoost = PatchAlbedoBoost(root);
 
+            // 2c. Environment Lighting: Glim always captures the skybox material; Unity's
+            //     lightmapper uses the Gradient / Color ambient source when one is selected.
+            bool ambient = PatchAmbientSource(root);
+
             // 3. Swap folders. Renaming fails if Glim's native DLL is loaded (after a bake), in
             //    which case nothing is changed and the update runs on the next Unity start.
             var target = FullPath(InstallDir);
@@ -312,7 +318,8 @@ namespace KnotStudios.GlimInstaller
             AssetDatabase.Refresh();
             var from = installed == null ? "" : $" (was {installed})";
             Log($"Installed Glim {latest} to {InstallDir}{from}. Rewrote package paths in {rewritten} script(s). " +
-                (albedoBoost ? "Albedo Boost support added." : "WARNING: Albedo Boost patch did not apply (Glim's MetaTexture.cs changed)."));
+                (albedoBoost ? "Albedo Boost support added. " : "WARNING: Albedo Boost patch did not apply (Glim's MetaTexture.cs changed). ") +
+                (ambient ? "Gradient/Color environment lighting support added." : "WARNING: environment lighting patch did not apply (Glim's SkyboxCapture.cs changed)."));
             if (interactive)
                 EditorUtility.DisplayDialog("Glim Installer", $"Glim {latest} installed to {InstallDir}.", "OK");
         }
@@ -340,6 +347,32 @@ namespace KnotStudios.GlimInstaller
             text = text.Replace(AlbedoBoostOriginal, AlbedoBoostPatched);
             var enc = new UTF8Encoding(bom);
             File.WriteAllBytes(file, Combine(enc.GetPreamble(), enc.GetBytes(text)));
+            return true;
+        }
+
+        const string AmbientOriginal = "camera.RenderToCubemap(rt);";
+        const string AmbientPatched = "GlimInstallerAmbient.RenderToCubemap(camera, rt); // Glim Installer: ambient source";
+
+        static bool PatchAmbientSource(string packageRoot)
+        {
+            var file = Path.Combine(packageRoot, "Editor", "SkyboxCapture.cs");
+            var template = Path.GetFullPath(AmbientHelperTemplate);
+            if (!File.Exists(file) || !File.Exists(template)) return false;
+
+            var bytes = File.ReadAllBytes(file);
+            bool bom = bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF;
+            var text = Encoding.UTF8.GetString(bytes, bom ? 3 : 0, bytes.Length - (bom ? 3 : 0));
+            if (!text.Contains("Glim Installer: ambient source"))
+            {
+                int first = text.IndexOf(AmbientOriginal, StringComparison.Ordinal);
+                if (first < 0 || text.IndexOf(AmbientOriginal, first + 1, StringComparison.Ordinal) >= 0)
+                    return false; // missing or ambiguous: leave Glim untouched
+                text = text.Replace(AmbientOriginal, AmbientPatched);
+                var enc = new UTF8Encoding(bom);
+                File.WriteAllBytes(file, Combine(enc.GetPreamble(), enc.GetBytes(text)));
+            }
+
+            File.Copy(template, Path.Combine(packageRoot, "Editor", "GlimInstallerAmbient.cs"), true);
             return true;
         }
 

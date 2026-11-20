@@ -1,0 +1,100 @@
+// Added by Glim Installer (com.knotstudiosllc.glim-installer).
+// Glim lights the scene with whatever the skybox material renders. Unity's lightmapper instead
+// uses Lighting > Environment > Environment Lighting > Source, which can be a Gradient or a
+// single Color. When it is, render that gradient / color into Glim's sky capture instead.
+using UnityEditor;
+using UnityEngine;
+using UnityEngine.Rendering;
+
+namespace Glim
+{
+    static class GlimInstallerAmbient
+    {
+        const string ShaderSource = @"
+Shader ""Hidden/GlimInstaller/AmbientGradient""
+{
+    Properties
+    {
+        _Sky (""Sky"", Color) = (1,1,1,1)
+        _Equator (""Equator"", Color) = (0.5,0.5,0.5,1)
+        _Ground (""Ground"", Color) = (0,0,0,1)
+    }
+    SubShader
+    {
+        Tags { ""Queue""=""Background"" ""RenderType""=""Background"" ""PreviewType""=""Skybox"" }
+        Cull Off ZWrite Off
+        Pass
+        {
+            CGPROGRAM
+            #pragma vertex vert
+            #pragma fragment frag
+            #include ""UnityCG.cginc""
+            float4 _Sky, _Equator, _Ground;
+            struct v2f { float4 pos : SV_POSITION; float3 dir : TEXCOORD0; };
+            v2f vert (float4 vertex : POSITION)
+            {
+                v2f o;
+                o.pos = UnityObjectToClipPos(vertex);
+                o.dir = vertex.xyz;
+                return o;
+            }
+            float4 frag (v2f i) : SV_Target
+            {
+                float y = normalize(i.dir).y;
+                float3 c = y >= 0 ? lerp(_Equator.rgb, _Sky.rgb, y) : lerp(_Equator.rgb, _Ground.rgb, -y);
+                return float4(c, 1);
+            }
+            ENDCG
+        }
+    }
+}";
+
+        static Shader s_Shader;
+
+        public static void RenderToCubemap(Camera camera, RenderTexture rt)
+        {
+            var mode = RenderSettings.ambientMode;
+            if (mode != AmbientMode.Trilight && mode != AmbientMode.Flat)
+            {
+                camera.RenderToCubemap(rt);
+                return;
+            }
+
+            if (s_Shader == null)
+            {
+                s_Shader = ShaderUtil.CreateShaderAsset(ShaderSource, false);
+                s_Shader.hideFlags = HideFlags.HideAndDontSave;
+            }
+
+            var mat = new Material(s_Shader) { hideFlags = HideFlags.HideAndDontSave };
+            if (mode == AmbientMode.Flat)
+            {
+                var c = RenderSettings.ambientLight;
+                mat.SetColor("_Sky", c);
+                mat.SetColor("_Equator", c);
+                mat.SetColor("_Ground", c);
+            }
+            else
+            {
+                mat.SetColor("_Sky", RenderSettings.ambientSkyColor);
+                mat.SetColor("_Equator", RenderSettings.ambientEquatorColor);
+                mat.SetColor("_Ground", RenderSettings.ambientGroundColor);
+            }
+
+            var previousSkybox = RenderSettings.skybox;
+            bool previousAsync = ShaderUtil.allowAsyncCompilation;
+            try
+            {
+                ShaderUtil.allowAsyncCompilation = false; // no placeholder shader in the capture
+                RenderSettings.skybox = mat;
+                camera.RenderToCubemap(rt);
+            }
+            finally
+            {
+                RenderSettings.skybox = previousSkybox;
+                ShaderUtil.allowAsyncCompilation = previousAsync;
+                Object.DestroyImmediate(mat);
+            }
+        }
+    }
+}

@@ -18,6 +18,9 @@ those to `Assets/Plugins/Glim/...` so baking works from the Assets folder.
 
 It also makes Glim respect the Lighting window's **Albedo Boost** (Unity's meta pass raises albedo to
 `1 / Albedo Boost`; stock Glim always uses 1), so bounce lighting matches Unity's lightmapper.
+When **Lighting > Environment > Environment Lighting > Source** is **Gradient** or **Color**, Glim's
+sky capture uses those colors (stock Glim always uses the skybox material), matching Unity's lightmapper.
+
 Existing installs are re-patched automatically when the installer updates.
 
 ## Menu: Tools → Glim
