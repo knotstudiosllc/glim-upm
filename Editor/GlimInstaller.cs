@@ -22,9 +22,9 @@ namespace KnotStudios.GlimInstaller
         const string OldEmbeddedDir = "Assets/Packages/io.github.z3y.glim";
 
         // Bump when the installer changes what it does to Glim's files, so existing installs are
-        // re-patched. 1 = package path rewrite, 2 = Albedo Boost support,
-        // 3 = Environment Lighting Gradient / Color sky.
-        const int PatchLevel = 3;
+        // re-patched. 1 = package path rewrite, 2 = Albedo Boost (Lighting window),
+        // 3 = Environment Lighting Gradient / Color sky, 4 = Albedo Boost slider on the Glim Lightmapper.
+        const int PatchLevel = 4;
         const string AmbientHelperTemplate = "Packages/com.knotstudiosllc.glim-installer/Editor/Patches/GlimInstallerAmbient.cs.txt";
         // Dot-files are ignored by Unity's asset database.
         const string MarkerFile = InstallDir + "/.glim-installer-patch";
@@ -318,36 +318,64 @@ namespace KnotStudios.GlimInstaller
             AssetDatabase.Refresh();
             var from = installed == null ? "" : $" (was {installed})";
             Log($"Installed Glim {latest} to {InstallDir}{from}. Rewrote package paths in {rewritten} script(s). " +
-                (albedoBoost ? "Albedo Boost support added. " : "WARNING: Albedo Boost patch did not apply (Glim's MetaTexture.cs changed). ") +
+                (albedoBoost ? "Albedo Boost support added. " : "WARNING: Albedo Boost patch did not apply (Glim's GlimLightmapper.cs or MetaTexture.cs changed). ") +
                 (ambient ? "Gradient/Color environment lighting support added." : "WARNING: environment lighting patch did not apply (Glim's SkyboxCapture.cs changed)."));
             if (interactive)
                 EditorUtility.DisplayDialog("Glim Installer", $"Glim {latest} installed to {InstallDir}.", "OK");
         }
 
+        // Albedo Boost: an "Albedo Boost" slider on the Glim Lightmapper component, used when Glim
+        // renders surface colours through each material's Meta pass (albedo^(1/boost), the same as
+        // Unity's lightmapper). Stock Glim always uses 1.
+        const string AlbedoFieldAnchor = "public float emissiveMultiplier = 1.0f;";
+        const string AlbedoField =
+            "public float emissiveMultiplier = 1.0f;\n\n" +
+            "        [Tooltip(\"Brightens surface colors for bounced light, like Unity's Albedo Boost (albedo^(1/boost)). " +
+            "1 = physically correct, 10 = surfaces bounce almost like white. Added by Glim Installer.\")]\n" +
+            "        [Range(1.0f, 10.0f)] public float albedoBoost = 1.0f; // Glim Installer: Albedo Boost";
         const string AlbedoBoostOriginal = "cmd.SetGlobalFloat(\"unity_OneOverOutputBoost\", 1.0f);";
         const string AlbedoBoostPatched =
             "cmd.SetGlobalFloat(\"unity_OneOverOutputBoost\", 1.0f / Mathf.Clamp(" +
-            "UnityEditor.Lightmapping.TryGetLightingSettings(out var glimInstallerLightingSettings) " +
-            "? glimInstallerLightingSettings.albedoBoost : 1.0f, 1.0f, 10.0f)); // Glim Installer: Albedo Boost";
+            "UnityEngine.Object.FindFirstObjectByType<GlimLightmapper>() is GlimLightmapper glimInstallerLightmapper " +
+            "? glimInstallerLightmapper.albedoBoost : 1.0f, 1.0f, 10.0f)); // Glim Installer: Albedo Boost";
 
         static bool PatchAlbedoBoost(string packageRoot)
         {
-            var file = Path.Combine(packageRoot, "Editor", "MetaTexture.cs");
+            // Both edits or neither: MetaTexture must never reference a field that wasn't added.
+            var runtimeFile = Path.Combine(packageRoot, "Runtime", "GlimLightmapper.cs");
+            var metaFile = Path.Combine(packageRoot, "Editor", "MetaTexture.cs");
+            if (!TryReplaceOnce(runtimeFile, AlbedoFieldAnchor, AlbedoField, out var runtimeText, out var runtimeBom)) return false;
+            if (!TryReplaceOnce(metaFile, AlbedoBoostOriginal, AlbedoBoostPatched, out var metaText, out var metaBom)) return false;
+            WriteText(runtimeFile, runtimeText, runtimeBom);
+            WriteText(metaFile, metaText, metaBom);
+            return true;
+        }
+
+        // Replaces a string that must occur exactly once. Keeps the file's line endings.
+        static bool TryReplaceOnce(string file, string original, string patched, out string text, out bool bom)
+        {
+            text = null;
+            bom = false;
             if (!File.Exists(file)) return false;
 
             var bytes = File.ReadAllBytes(file);
-            bool bom = bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF;
-            var text = Encoding.UTF8.GetString(bytes, bom ? 3 : 0, bytes.Length - (bom ? 3 : 0));
-            if (text.Contains("Glim Installer: Albedo Boost")) return true;
+            bom = bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF;
+            text = Encoding.UTF8.GetString(bytes, bom ? 3 : 0, bytes.Length - (bom ? 3 : 0));
+            if (text.Contains("Glim Installer: Albedo Boost")) return true; // already patched
 
-            int first = text.IndexOf(AlbedoBoostOriginal, StringComparison.Ordinal);
-            if (first < 0 || text.IndexOf(AlbedoBoostOriginal, first + 1, StringComparison.Ordinal) >= 0)
+            int first = text.IndexOf(original, StringComparison.Ordinal);
+            if (first < 0 || text.IndexOf(original, first + 1, StringComparison.Ordinal) >= 0)
                 return false; // missing or ambiguous: leave Glim untouched
 
-            text = text.Replace(AlbedoBoostOriginal, AlbedoBoostPatched);
+            string newline = text.Contains("\r\n") ? "\r\n" : "\n";
+            text = text.Replace(original, patched.Replace("\n", newline));
+            return true;
+        }
+
+        static void WriteText(string file, string text, bool bom)
+        {
             var enc = new UTF8Encoding(bom);
             File.WriteAllBytes(file, Combine(enc.GetPreamble(), enc.GetBytes(text)));
-            return true;
         }
 
         const string AmbientOriginal = "camera.RenderToCubemap(rt);";
