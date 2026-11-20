@@ -178,7 +178,10 @@ def apply_patches(package_dir):
     note = f" (UPM mirror: temp bake scene moved to {WRITABLE_DIR} so it works from a git URL)"
     if note not in pkg.get("description", ""):
         pkg["description"] = pkg.get("description", "") + note
-        pkg_path.write_text(json.dumps(pkg, indent=2) + "\n", encoding="utf-8")
+        out = json.dumps(pkg, indent=2) + "\n"
+        if b"\r\n" in pkg_path.read_bytes():
+            out = out.replace("\n", "\r\n")
+        pkg_path.write_bytes(out.encode("utf-8"))  # bytes: no newline translation on Windows
 
 
 def make_zip(ref, name):
