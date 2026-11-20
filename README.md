@@ -16,7 +16,7 @@ version is out, it downloads it and puts it in `Assets/Plugins/Glim`.
 Glim's scripts reference their own files as `Packages/io.github.z3y.glim/...`; the installer rewrites
 those to `Assets/Plugins/Glim/...` so baking works from the Assets folder.
 
-It also adds an **Albedo Boost** slider (1-10) to the **Glim Lightmapper** component. Like Unity's
+It also adds an **Albedo Boost** slider (1-100) to the **Glim Lightmapper** component. Like Unity's
 Albedo Boost, surface colors are raised to `1 / boost` for bounced light (stock Glim always uses 1).
 When **Lighting > Environment > Environment Lighting > Source** is **Gradient** or **Color**, Glim's
 sky capture uses those colors (stock Glim always uses the skybox material), matching Unity's lightmapper.

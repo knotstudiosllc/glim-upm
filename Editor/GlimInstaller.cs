@@ -23,8 +23,9 @@ namespace KnotStudios.GlimInstaller
 
         // Bump when the installer changes what it does to Glim's files, so existing installs are
         // re-patched. 1 = package path rewrite, 2 = Albedo Boost (Lighting window),
-        // 3 = Environment Lighting Gradient / Color sky, 4 = Albedo Boost slider on the Glim Lightmapper.
-        const int PatchLevel = 4;
+        // 3 = Environment Lighting Gradient / Color sky, 4 = Albedo Boost slider on the Glim Lightmapper,
+        // 5 = Albedo Boost range raised to 100.
+        const int PatchLevel = 5;
         const string AmbientHelperTemplate = "Packages/com.knotstudiosllc.glim-installer/Editor/Patches/GlimInstallerAmbient.cs.txt";
         // Dot-files are ignored by Unity's asset database.
         const string MarkerFile = InstallDir + "/.glim-installer-patch";
@@ -331,13 +332,13 @@ namespace KnotStudios.GlimInstaller
         const string AlbedoField =
             "public float emissiveMultiplier = 1.0f;\n\n" +
             "        [Tooltip(\"Brightens surface colors for bounced light, like Unity's Albedo Boost (albedo^(1/boost)). " +
-            "1 = physically correct, 10 = surfaces bounce almost like white. Added by Glim Installer.\")]\n" +
-            "        [Range(1.0f, 10.0f)] public float albedoBoost = 1.0f; // Glim Installer: Albedo Boost";
+            "1 = physically correct; higher values make surfaces bounce closer to white (max 100). Added by Glim Installer.\")]\n" +
+            "        [Range(1.0f, 100.0f)] public float albedoBoost = 1.0f; // Glim Installer: Albedo Boost";
         const string AlbedoBoostOriginal = "cmd.SetGlobalFloat(\"unity_OneOverOutputBoost\", 1.0f);";
         const string AlbedoBoostPatched =
             "cmd.SetGlobalFloat(\"unity_OneOverOutputBoost\", 1.0f / Mathf.Clamp(" +
             "UnityEngine.Object.FindFirstObjectByType<GlimLightmapper>() is GlimLightmapper glimInstallerLightmapper " +
-            "? glimInstallerLightmapper.albedoBoost : 1.0f, 1.0f, 10.0f)); // Glim Installer: Albedo Boost";
+            "? glimInstallerLightmapper.albedoBoost : 1.0f, 1.0f, 100.0f)); // Glim Installer: Albedo Boost";
 
         static bool PatchAlbedoBoost(string packageRoot)
         {
