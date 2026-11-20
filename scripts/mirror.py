@@ -33,7 +33,8 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def git(*args, cwd=ROOT, capture=False):
-    result = subprocess.run(["git", *args], cwd=cwd, check=True, text=True,
+    # autocrlf off: store upstream files byte-for-byte on every OS.
+    result = subprocess.run(["git", "-c", "core.autocrlf=false", *args], cwd=cwd, check=True, text=True,
                             stdout=subprocess.PIPE if capture else None)
     return result.stdout.strip() if capture else None
 
@@ -119,7 +120,9 @@ def mirror(release, worktree):
         shutil.copy(zip_path, keep_zip)
 
     version = json.loads((worktree / "package.json").read_text(encoding="utf-8"))["version"]
-    git("add", "-A", cwd=worktree)
+    # --force: upstream ships .gitignore files that exclude the native glim.dll / glim.so,
+    # which the package needs. Commit everything that was in the release zip.
+    git("add", "--all", "--force", ".", cwd=worktree)
     git("-c", "user.name=glim-upm-mirror", "-c", "user.email=glim-upm-mirror@users.noreply.github.com",
         "commit", "--allow-empty", "-m", f"Glim {version} (mirror of {UPSTREAM} {tag})", cwd=worktree)
     git("-c", "user.name=glim-upm-mirror", "-c", "user.email=glim-upm-mirror@users.noreply.github.com",
