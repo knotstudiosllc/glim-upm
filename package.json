@@ -1,0 +1,11 @@
+{
+  "name": "com.knotstudiosllc.glim-installer",
+  "displayName": "Glim Installer",
+  "version": "1.0.0",
+  "unity": "2022.3",
+  "description": "Installs and auto-updates Glim (github.com/z3y/glim) in Assets/Plugins/Glim. Checks for new Glim releases when Unity starts; see Tools > Glim.",
+  "author": {
+    "name": "Knot Studios LLC",
+    "url": "https://github.com/knotstudiosllc"
+  }
+}
