@@ -21,6 +21,12 @@ namespace KnotStudios.GlimInstaller
         const string UpstreamPathPrefix = "Packages/io.github.z3y.glim/";
         const string OldEmbeddedDir = "Assets/Packages/io.github.z3y.glim";
 
+        // Bump when the installer changes what it does to Glim's files, so existing installs are
+        // re-patched. 1 = package path rewrite, 2 = Albedo Boost support.
+        const int PatchLevel = 2;
+        // Dot-files are ignored by Unity's asset database.
+        const string MarkerFile = InstallDir + "/.glim-installer-patch";
+
         const string SessionKey = "GlimInstaller.CheckedThisSession";
         const string AutoUpdatePref = "GlimInstaller.AutoUpdate";
         const string Menu = "Tools/Glim/";
@@ -31,10 +37,24 @@ namespace KnotStudios.GlimInstaller
 
         static GlimInstaller()
         {
-            if (Application.isBatchMode || SessionState.GetBool(SessionKey, false))
+            if (Application.isBatchMode)
                 return;
+
+            bool checkedThisSession = SessionState.GetBool(SessionKey, false);
+            // After the installer itself updates (same session), still re-patch an outdated install.
+            bool outdatedPatch = InstalledVersion() != null && InstalledPatchLevel() < PatchLevel;
+            if (checkedThisSession && !outdatedPatch)
+                return;
+
             SessionState.SetBool(SessionKey, true);
             EditorApplication.delayCall += () => Check(interactive: false, force: false);
+        }
+
+        static int InstalledPatchLevel()
+        {
+            var path = FullPath(MarkerFile);
+            if (!File.Exists(path)) return InstalledVersion() == null ? 0 : 1;
+            return int.TryParse(File.ReadAllText(path).Trim(), out var level) ? level : 1;
         }
 
         [MenuItem(Menu + "Check for Updates", priority = 0)]
@@ -138,7 +158,8 @@ namespace KnotStudios.GlimInstaller
             }
 
             var installed = InstalledVersion();
-            bool needed = force || installed == null || latest > installed;
+            bool repatch = installed != null && InstalledPatchLevel() < PatchLevel;
+            bool needed = force || repatch || installed == null || latest > installed;
             if (!needed)
             {
                 s_Busy = false;
@@ -147,7 +168,7 @@ namespace KnotStudios.GlimInstaller
                 return;
             }
 
-            if (installed != null && !force && !interactive && !AutoUpdate)
+            if (installed != null && !force && !repatch && !interactive && !AutoUpdate)
             {
                 s_Busy = false;
                 Log($"Glim {latest} is available (installed: {installed}). Use Tools > Glim > Check for Updates.");
@@ -255,6 +276,11 @@ namespace KnotStudios.GlimInstaller
                 rewritten++;
             }
 
+            // 2b. Albedo Boost: Glim renders albedo through each material's Meta pass but always
+            //     passes boost 1. Unity's lightmapper uses the Lighting window's Albedo Boost
+            //     (meta pass does albedo^(1/boost)); feed Glim the same value.
+            bool albedoBoost = PatchAlbedoBoost(root);
+
             // 3. Swap folders. Renaming fails if Glim's native DLL is loaded (after a bake), in
             //    which case nothing is changed and the update runs on the next Unity start.
             var target = FullPath(InstallDir);
@@ -272,6 +298,7 @@ namespace KnotStudios.GlimInstaller
                 }
             }
             Directory.Move(root, target);
+            File.WriteAllText(FullPath(MarkerFile), PatchLevel.ToString());
             if (Directory.Exists(backup))
             {
                 // Keep the folder's own .meta; drop the old files.
@@ -284,9 +311,36 @@ namespace KnotStudios.GlimInstaller
 
             AssetDatabase.Refresh();
             var from = installed == null ? "" : $" (was {installed})";
-            Log($"Installed Glim {latest} to {InstallDir}{from}. Rewrote package paths in {rewritten} script(s).");
+            Log($"Installed Glim {latest} to {InstallDir}{from}. Rewrote package paths in {rewritten} script(s). " +
+                (albedoBoost ? "Albedo Boost support added." : "WARNING: Albedo Boost patch did not apply (Glim's MetaTexture.cs changed)."));
             if (interactive)
                 EditorUtility.DisplayDialog("Glim Installer", $"Glim {latest} installed to {InstallDir}.", "OK");
+        }
+
+        const string AlbedoBoostOriginal = "cmd.SetGlobalFloat(\"unity_OneOverOutputBoost\", 1.0f);";
+        const string AlbedoBoostPatched =
+            "cmd.SetGlobalFloat(\"unity_OneOverOutputBoost\", 1.0f / Mathf.Clamp(" +
+            "UnityEditor.Lightmapping.TryGetLightingSettings(out var glimInstallerLightingSettings) " +
+            "? glimInstallerLightingSettings.albedoBoost : 1.0f, 1.0f, 10.0f)); // Glim Installer: Albedo Boost";
+
+        static bool PatchAlbedoBoost(string packageRoot)
+        {
+            var file = Path.Combine(packageRoot, "Editor", "MetaTexture.cs");
+            if (!File.Exists(file)) return false;
+
+            var bytes = File.ReadAllBytes(file);
+            bool bom = bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF;
+            var text = Encoding.UTF8.GetString(bytes, bom ? 3 : 0, bytes.Length - (bom ? 3 : 0));
+            if (text.Contains("Glim Installer: Albedo Boost")) return true;
+
+            int first = text.IndexOf(AlbedoBoostOriginal, StringComparison.Ordinal);
+            if (first < 0 || text.IndexOf(AlbedoBoostOriginal, first + 1, StringComparison.Ordinal) >= 0)
+                return false; // missing or ambiguous: leave Glim untouched
+
+            text = text.Replace(AlbedoBoostOriginal, AlbedoBoostPatched);
+            var enc = new UTF8Encoding(bom);
+            File.WriteAllBytes(file, Combine(enc.GetPreamble(), enc.GetBytes(text)));
+            return true;
         }
 
         static byte[] Combine(byte[] a, byte[] b)
